@@ -8,14 +8,16 @@ _       "github.com/go-sql-driver/mysql"
 		"log"
 		"strconv"
 		"os"
+		"bufio"
+		"strings"
 )
 
 const (
-	DB_IPADDR			= ""
-	DB_PORT				= ""
+	DB_IPADDR		= ""
+	DB_PORT			= ""
 	DB_USERNAME 		= ""
 	DB_PASSWORD 		= ""
-	DB_NAME				= ""
+	DB_NAME			= ""
 	NETSWITCH_USERNAME	= ""
 	NETSWITCH_PASSWORD	= ""
 )
@@ -123,10 +125,11 @@ func cmdSet(request_type string, netswitch string, vlan_number int, port []strin
 			cmd = append(cmd, "interface " + port[x])
 			cmd = append(cmd, "switchport access vlan" + strconv.Itoa(vlan_number))
 			cmd = append(cmd, "spanning-tree portfast")
+			cmd = append(cmd, "show run interface " + port[x])
 		}
 	case "check":
 		for x := 0; x < len(ports); x++ {
-			cmd = append(cmd, "show interface " + port[x] + " status")
+			cmd = append(cmd, "show run interface " + port[x])
 		}
 	case "bond":
 		cmd = append(cmd, "configure terminal")
@@ -173,11 +176,29 @@ func sshProcedure(netswitch string, cmd []string) {
 		// Prints output to screen
 		fmt.Println(cmd_output.String())
 		fmt.Printf("#########\n")
+
 	}
-		
+}
+	
+func verifyChangeConfiguration(output interface{}, vlan int) {
+	// Validate the command was applied.
+	scanner := bufio.NewScanner(&cmd_output)
+	line := 1
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), "switchport access vlan " + strconv.Itoa(vlan))  {
+			fmt.Println("True")
+		} else {
+			fmt.Println("False")
+		}
+		line++
+	}
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
 
+}	
 
-	func singleQueryLookup(task_id int, lookupItem string) string {
+func singleQueryLookup(task_id int, lookupItem string) string {
 	var output string
 	// Connect to the Database
 	db, err := sql.Open("mysql", DB_USERNAME + ":" + DB_PASSWORD + "@tcp(" + DB_IPADDR + ":" + DB_PORT + ")/" + DB_NAME)
@@ -242,12 +263,34 @@ func sshProcedure(netswitch string, cmd []string) {
 	return output
 }
 
-func updateDBEntry(){ // Update the DB to reflect the change is the port configuration
+func updateDBEntry(netswitch string, port string, vlan_number int){ // Update the DB to reflect the change is the port configuration
+	netswitches := make([]string, 0) 	// Create the Slice variable where the switch ports will be placed.
+	var netswitch string 			// Define the String variable that the port will be assigned to while being placed into the Slice via for loop.
 
-}
+	db, err := sql.Open("mysql", DB_USERNAME + ":" + DB_PASSWORD + "@tcp(" + DB_IPADDR + ":" + DB_PORT + ")/" + DB_NAME)
+	if err != nil {
+			log.Fatal(err)
+	}
+	defer db.Close()
 
-func verifyConfiguration(netswitch string, port string){ // Verify the port configuration was applied.
-
+	rows, err := db.Query("SELECT networkassistant_switch.fqdn FROM networkassistant_switch JOIN networkassistant_port ON networkassistant_switch.id = networkassistant_port.switch_fqdn_id JOIN networkassistant_task ON networkassistant_port.port_id = networkassistant_task.port_id WHERE request_id = ?", task_id)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next(){
+		err := rows.Scan(&netswitch)
+		if err != nil {
+				log.Fatal(err)
+		}
+		netswitches = append(netswitches, netswitch)		
+	}
+		err = rows.Err()
+	if err != nil {
+			log.Fatal(err)
+	}
+	defer db.Close()
+	return netswitches
 }
 
 func deleteDBTask(task_id int) { // Delete the Task entry once everything is complete.
@@ -260,10 +303,15 @@ func main(){
 	vlan_number := singleQueryLookup(1, "vlan_number")		// Check the VLAN number based on the Task ID in the Django database.
 	requester := singleQueryLookup(1, "requester")			// Check who the requester is based on the Task ID in the Django database.
 	netswitch := removeDuplicateValues(switchList(1))		// Retrieve the switches that are involved on the request.
+	port_speed := "N/A"
+	port_duplex := "N/A"
+	port_status := "N/A"
 
 	for i := 0; i < len(netswitch); i++ { 					// Loop through the switches running the switch command set.
 		ports := portList(task_id, netswitch[i])						// Gather the ports that'll be configured for this switch.
 		cmd := cmdSet(request_type, netswitch[i], vlan_number, ports)	// Generate command set that'll be ran on the switches
 		sshProcedure(netswitch[i], cmd)
+		results := verifyConfiguration(netswitch, ports)
+
 	}
 }
