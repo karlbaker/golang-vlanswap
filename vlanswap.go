@@ -272,9 +272,9 @@ func singleQueryLookup(task_id int, lookupItem string) string {
 	return output
 }
 
-func updateDBEntry(netswitch string, port string, vlan_number int){ // Update the DB to reflect the change is the port configuration
+func updatePortDBEntry(netswitch string, port string, vlan_number int){ // Update the DB to reflect the change is the port configuration
 	netswitches := make([]string, 0) 	// Create the Slice variable where the switch ports will be placed.
-	var netswitch string 			// Define the String variable that the port will be assigned to while being placed into the Slice via for loop.
+	var netswitch string 				// Define the String variable that the port will be assigned to while being placed into the Slice via for loop.
 
 	db, err := sql.Open("mysql", DB_USERNAME + ":" + DB_PASSWORD + "@tcp(" + DB_IPADDR + ":" + DB_PORT + ")/" + DB_NAME)
 	if err != nil {
@@ -282,28 +282,14 @@ func updateDBEntry(netswitch string, port string, vlan_number int){ // Update th
 	}
 	defer db.Close()
 
-	rows, err := db.Query("SELECT networkassistant_switch.fqdn FROM networkassistant_switch JOIN networkassistant_port ON networkassistant_switch.id = networkassistant_port.switch_fqdn_id JOIN networkassistant_task ON networkassistant_port.port_id = networkassistant_task.port_id WHERE request_id = ?", task_id)
+	result, err := db.Exec("UPDATE networkassistant_port JOIN networkassistant_switch ON networkassistant_port.switch_fqdn_id = networkassistant_switch.id JOIN networkassistant_vlan ON networkassistant_port.vlan_name_id = networkassistant_vlan.id SET networkassistant_port.vlan_name_id = ? WHERE networkassistant_switch.fqdn = ?, networkassistant_port.port_id = ?, networkassistant_vlan.name = ?", vlan_number, netswitch, port, vlan_number)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer rows.Close()
-	for rows.Next(){
-		err := rows.Scan(&netswitch)
-		if err != nil {
-				log.Fatal(err)
-		}
-		netswitches = append(netswitches, netswitch)		
-	}
-		err = rows.Err()
-	if err != nil {
-			log.Fatal(err)
-	}
-	defer db.Close()
-	return netswitches
+	
 }
 
-func deleteDBTask(task_id int) { // Delete the Task entry once everything is complete.
-	var count int
+func updateTaskDBEntry(task_id int, netswitch string, port string, status_code string, status_detail string) { // Update the task status (by port) to provide live feed to the front-end
 	// DB Connection
 	db, err := sql.Open("mysql", DB_USERNAME + ":" + DB_PASSWORD + "@tcp(" + DB_IPADDR + ":" + DB_PORT + ")/" + DB_NAME)
 	if err != nil {
@@ -311,14 +297,40 @@ func deleteDBTask(task_id int) { // Delete the Task entry once everything is com
 	}
 	defer db.Close()
 	// CMD Against DB
-	res := db.Exec("DELETE FROM networkassistant_task WHERE request_id = ?", task_id)
-	err = row.Scan(&count)
+	rows, err := db.Query("UPDATE networkassistant_task JOIN networkassistant_port ON networkassistant_task.port_id = networkassistant_port.port_id JOIN networkassistant_switch ON networkassistant_port.switch_fqdn_id = networkassistant_switch.id SET status_id = ?, status = ? WHERE request_id = ?, networkassistant_switch.fqdn = ?, networkassistant_port.switch_port", status_code, status_detail, task_id, netswitch, port)
+	if err != nil {
+			log.Fatal(err)
+	}
+	defer rows.Close()
+	var numDelete int
+	for rows.Next() {
+		numDeleted += 1
+	}
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func deleteDBTask(task_id int) { // Delete the Task entry once everything is complete.
+	// DB Connection
+	db, err := sql.Open("mysql", DB_USERNAME + ":" + DB_PASSWORD + "@tcp(" + DB_IPADDR + ":" + DB_PORT + ")/" + DB_NAME)
 	if err != nil {
 			log.Fatal(err)
 	}
 	defer db.Close()
-
-	return count
+	// CMD Against DB
+	rows, err := db.Query("DELETE FROM networkassistant_task WHERE request_id = ?", task_id)
+	if err != nil {
+			log.Fatal(err)
+	}
+	defer rows.Close()
+	var numDelete int
+	for rows.Next() {
+		numDeleted += 1
+	}
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main() {
